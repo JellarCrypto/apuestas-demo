@@ -5,14 +5,27 @@ Incluye funciones para obtener fixtures, cuotas y estadísticas básicas.
 """
 import os
 import requests
-from typing import Dict, Any, List
 
-# Configuración de la API
-API_KEY = os.getenv("API_FOOTBALL_KEY", "TU_API_KEY_AQUI")
+# Intentamos leer de st.secrets cuando corra en Streamlit Cloud
+try:
+    import streamlit as st
+    API_KEY = st.secrets.get("API_FOOTBALL_KEY")
+except ImportError:
+    API_KEY = None
+
+# Si no venía por st.secrets, lo tomamos de la variable de entorno
+if not API_KEY:
+    API_KEY = os.getenv("API_FOOTBALL_KEY")
+
+if not API_KEY:
+    raise ValueError(
+        "Falta la API_KEY de API-Football.\n"
+        "Define API_FOOTBALL_KEY en Secrets de Streamlit Cloud o como variable de entorno."
+    )
+
 BASE_URL = "https://v3.football.api-sports.io"
-HEADERS = {
-    "x-apisports-key": API_KEY,
-    "Accept": "application/json"
+HEADERS = {"x-apisports-key": API_KEY, "Accept": "application/json"}
+
 }
 
 def _get(endpoint: str, params: Dict[str, Any] = None) -> Dict[str, Any]:

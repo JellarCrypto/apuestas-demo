@@ -1,92 +1,57 @@
-# app_streamlit.py
+# data_ingest.py
 """
-Web App con Streamlit para análisis de apuestas deportivas.
-Pide la API Key en el sidebar y muestra las 3 mejores apuestas 1X2 con ≥80% de probabilidad.
+Módulo para ingesta de datos desde API-Football (v3).
+Usa la clave definida en la variable de entorno API_FOOTBALL_KEY.
 """
 import os
-import streamlit as st
+import requests
 
-# ── PEDIR LA API KEY EN EL SIDEBAR ────────────────────────────────────────────
-st.set_page_config(page_title="Apuestas Deportivas", layout="centered")
-st.sidebar.header("Ajustes API")
-api_key = st.sidebar.text_input("API-Football Key", type="password")
-if not api_key:
-    st.sidebar.error("🔑 Introduce tu API Key para continuar")
-    st.stop()
-os.environ["API_FOOTBALL_KEY"] = api_key
+# Leer la API Key de la variable de entorno
+API_KEY = os.getenv("API_FOOTBALL_KEY")
+if not API_KEY:
+    raise ValueError(
+        "Falta la API_KEY de API-Football.\n"
+        "Define API_FOOTBALL_KEY en la variable de entorno antes de usar."
+    )
 
-# ── IMPORTS QUE DEPENDEN DE LA API KEY ────────────────────────────────────────
-from data_ingest import fetch_upcoming_fixtures, fetch_odds_for_fixture
-from app import calcular_probabilidades_desde_cuotas
+BASE_URL = "https://v3.football.api-sports.io"
+HEADERS = {
+    "x-apisports-key": API_KEY,
+    "Accept": "application/json"
+}
 
-# ── LOGO / TÍTULO DE PÁGINA ──────────────────────────────────────────────────
-st.title("Análisis de Apuestas Deportivas")
+def _get(endpoint: str, params: dict = None) -> list:
+    """
+    Llama al endpoint de API-Football y devuelve la parte 'response'.
+    """
+    url = f"{BASE_URL}{endpoint}"
+    response = requests.get(url, headers=HEADERS, params=params or {})
+    response.raise_for_status()
+    data = response.json()
+    if data.get("errors"):
+        raise ValueError(f"Error API-Football: {data['errors']}")
+    return data.get("response", [])
 
-# ── SELECCIÓN DE PARTIDO PSG (Champions League 2024) ─────────────────────────
-st.markdown("## Selecciona Partido")
-league_id = 2   # Champions League
-season = 2024
+def fetch_upcoming_fixtures(league_id: int, season: int = None) -> list:
+    """
+    Obtiene los próximos fixtures para una liga y temporada dada.
+    :param league_id: ID de la liga en API-Football
+    :param season: Año de la temporada (e.g., 2024). Opcional.
+    :return: Lista de fixtures (response JSON).
+    """
+    params = {"league": league_id}
+    if season is not None:
+        params["season"] = season
+    return _get("/fixtures", params)
 
-try:
-    fixtures = fetch_upcoming_fixtures(league_id, season)
-except Exception as e:
-    st.error(f"Error al obtener fixtures: {e}")
-    st.stop()
-
-psg_fixtures = []
-for f in fixtures:
-    home = f["teams"]["home"]["name"]
-    away = f["teams"]["away"]["name"]
-    if "Paris Saint-Germain" in (home, away):
-        psg_fixtures.append(f)
-
-if not psg_fixtures:
-    st.warning("No se encontró partido de PSG para Champions League 2024.")
-    st.stop()
-
-fixture = psg_fixtures[0]
-fix = fixture["fixture"]
-home = fixture["teams"]["home"]["name"]
-away = fixture["teams"]["away"]["name"]
-date = fix["date"]
-fixture_id = fix["id"]
-
-st.markdown(f"### Partido: **{home} vs {away}**\n**Fecha:** {date}")
-
-# ── CÁLCULO DE APUESTAS 1X2 CON PROB ≥80% ──────────────────────────────────
-try:
-    odds_data = fetch_odds_for_fixture(fixture_id)
-except Exception as e:
-    st.error(f"Error al obtener cuotas: {e}")
-    st.stop()
-
-odds_1x2 = []
-for offer in odds_data:
-    for bet in offer.get("bets", []):
-        if bet.get("name") in ["Match Winner", "1X2"]:
-            for val in bet.get("values", []):
-                key = val["value"]
-                odd = val["odd"]
-                # Guardamos en un dict para luego procesar
-                mapping = {v["value"]: v["odd"] for v in bet["values"]}
-            if home in mapping and "Draw" in mapping and away in mapping:
-                cL, cE, cV = mapping[home], mapping["Draw"], mapping[away]
-                probs = calcular_probabilidades_desde_cuotas(cL, cE, cV)
-                for nombre, prob, cuota in [
-                    (home, probs[0], cL),
-                    ("Empate", probs[1], cE),
-                    (away, probs[2], cV)
-                ]:
-                    ve = prob * cuota - 1
-                    if prob >= 0.8:
-                        odds_1x2.append((nombre, prob, cuota, ve))
-
-if not odds_1x2:
-    st.info("No hay apuestas con probabilidad ≥80% en 1X2 para este partido.")
-else:
-    st.markdown("## Top 3 apuestas con ≥80% de probabilidad")
-    for nombre, prob, cuota, ve in sorted(odds_1x2, key=lambda x: x[1], reverse=True)[:3]:
-        st.write(f"**{nombre}**: Prob={prob*100:.1f}% | Cuota={cuota} | VE={ve:.2f}")
-
-st.markdown("---")
-st.write("Demo creada con Streamlit. Ajusta la API Key y parámetros según necesites.")
+def fetch_odds_for_fixture(fixture_id: int, bookmaker: str = None) -> list:
+    """
+    Obtiene cuotas para un fixture específico.
+    :param fixture_id: ID del partido
+    :param bookmaker: Nombre interno del bookmaker (opcional)
+    :return: Lista de ofertas de cuotas (response JSON).
+    """
+    params = {"fixture": fixture_id}
+    if bookmaker:
+        params["bookmaker"] = bookmaker
+    return _get("/odds", params)

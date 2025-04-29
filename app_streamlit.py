@@ -1,23 +1,31 @@
 # app_streamlit.py
 """
 Web App con Streamlit para análisis de apuestas deportivas.
-Deploy gratuito en Streamlit Cloud.
+Pide la API Key en el sidebar y muestra las 3 mejores apuestas 1X2 con ≥80% de probabilidad.
 """
 import os
 import streamlit as st
-from data_ingest import fetch_upcoming_fixtures, fetch_odds_for_fixture
-from app import calcular_probabilidades_desde_cuotas
 
+# ── CONFIGURACIÓN DE PÁGINA ────────────────────────────────────────────────────
 st.set_page_config(page_title="Apuestas Deportivas", layout="centered")
 st.title("Análisis de Apuestas Deportivas")
 
+# ── PEDIR LA API KEY EN EL SIDEBAR ────────────────────────────────────────────
 st.sidebar.header("Ajustes API")
 api_key = st.sidebar.text_input("API-Football Key", type="password")
-if api_key:
-    os.environ["API_FOOTBALL_KEY"] = api_key
+if not api_key:
+    st.sidebar.error("🔑 Introduce tu API Key para continuar")
+    st.stop()
 
-st.markdown("## Selecciona Partido")
-league_id = 2  # Champions League
+# ── INYECTAR LA CLAVE ANTES DE IMPORTAR data_ingest ──────────────────────────
+os.environ["API_FOOTBALL_KEY"] = api_key
+
+# ── IMPORTS DE LÓGICA DE NEGOCIO ──────────────────────────────────────────────
+from data_ingest import fetch_upcoming_fixtures, fetch_odds_for_fixture
+from app import calcular_probabilidades_desde_cuotas
+
+# ── SELECCIÓN AUTOMÁTICA: PSG EN CHAMPIONS LEAGUE 2024 ───────────────────────
+league_id = 2   # Champions League
 season = 2024
 
 try:
@@ -29,23 +37,24 @@ except Exception as e:
 psg_fixtures = [
     f for f in fixtures
     if "Paris Saint-Germain" in (
-        f.get("teams", {}).get("home", {}).get("name"),
-        f.get("teams", {}).get("away", {}).get("name")
+        f["teams"]["home"]["name"],
+        f["teams"]["away"]["name"]
     )
 ]
 if not psg_fixtures:
-    st.warning("No se encontró partido de PSG.")
+    st.warning("No se encontró partido de PSG para Champions League 2024.")
     st.stop()
 
 fixture = psg_fixtures[0]
-fix = fixture.get("fixture", {})
-home = fixture.get("teams", {}).get("home", {}).get("name")
-away = fixture.get("teams", {}).get("away", {}).get("name")
-date = fix.get("date")
-fixture_id = fix.get("id")
+fix = fixture["fixture"]
+home = fixture["teams"]["home"]["name"]
+away = fixture["teams"]["away"]["name"]
+date = fix["date"]
+fixture_id = fix["id"]
 
-st.markdown(f"### Partido: {home} vs {away}\nFecha: {date}")
+st.markdown(f"### Partido: **{home} vs {away}**\n**Fecha:** {date}")
 
+# ── OBTENER CUOTAS Y CALCULAR TOP 3 A 1X2 ────────────────────────────────────
 try:
     odds_data = fetch_odds_for_fixture(fixture_id)
 except Exception as e:
@@ -56,12 +65,9 @@ odds_1x2 = []
 for offer in odds_data:
     for bet in offer.get("bets", []):
         if bet.get("name") in ["Match Winner", "1X2"]:
-            values = bet.get("values", [])
-            mapping = {v.get("value"): v.get("odd") for v in values}
-            if all(k in mapping for k in [home, "Draw", away]):
-                cuota_l = mapping[home]
-                cuota_e = mapping["Draw"]
-                cuota_v = mapping[away]
+            mapping = {v["value"]: v["odd"] for v in bet.get("values", [])}
+            if home in mapping and "Draw" in mapping and away in mapping:
+                cuota_l, cuota_e, cuota_v = mapping[home], mapping["Draw"], mapping[away]
                 probs = calcular_probabilidades_desde_cuotas(cuota_l, cuota_e, cuota_v)
                 for nombre, prob, cuota in [
                     (home, probs[0], cuota_l),
@@ -74,7 +80,7 @@ for offer in odds_data:
 
 odds_sorted = sorted(odds_1x2, key=lambda x: x[1], reverse=True)[:3]
 if not odds_sorted:
-    st.info("No hay apuestas con probabilidad >= 80% en 1X2.")
+    st.info("No hay apuestas con probabilidad ≥80% en 1X2 para este partido.")
 else:
     st.markdown("## Top 3 apuestas con ≥80% de probabilidad")
     for nombre, prob, cuota, ve in odds_sorted:
